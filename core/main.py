@@ -10,6 +10,7 @@ from core.proxy_server import start_proxy
 from firebase_admin import credentials, firestore
 import tkinter as tk
 from tkinter import messagebox
+import numpy as np # Import numpy
 
 # ================= CONFIG =================
 REGISTERED_FACES_DIR = "data/registered_faces"
@@ -81,30 +82,30 @@ def monitoring_loop():
         # ---- YOLO chỉ chạy khi authenticated ----
         if authenticated and net is not None:
             indices, boxes, confidences, class_ids = detect_objects(frame, net, output_layers, classes)
-            for i in indices:
-                i = i[0]
-                x, y, w, h = boxes[i]
-                label, conf = classes[class_ids[i]], confidences[i]
+            if len(indices) > 0: # Check if any objects were detected
+                for i in indices.flatten(): # Flatten the indices for robust iteration
+                    x, y, w, h = boxes[i]
+                    label, conf = classes[class_ids[i]], confidences[i]
 
-                color = (0, 0, 255) if label == "cell phone" else (128, 0, 128)
-                cv2.rectangle(frame, (x, y), (x + w, y + h), color, 2)
-                cv2.putText(frame, f"{label} {conf:.2f}", (x, y - 10),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+                    color = (0, 0, 255) if label == "cell phone" else (128, 0, 128)
+                    cv2.rectangle(frame, (x, y), (x + w, y + h), color, 2)
+                    cv2.putText(frame, f"{label} {conf:.2f}", (x, y - 10),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
 
-                if label == "cell phone":
-                    count += 1
-                    print(f"📱 Phát hiện điện thoại lần {count}")
+                    if label == "cell phone":
+                        count += 1
+                        print(f"📱 Phát hiện điện thoại lần {count}")
 
-                    if count == 3:
-                        update_user_field(examId, studentId, {
-                            "cheatSuspicion": "true",
-                            "suspicionTime": firestore.SERVER_TIMESTAMP
-                        })
-                    if count == 7:
-                        update_user_field(examId, studentId, {
-                            "cheatDetected": "true",
-                            "detectionTime": firestore.SERVER_TIMESTAMP
-                        })
+                        if count == 3:
+                            update_user_field(examId, studentId, {
+                                "cheatSuspicion": "true",
+                                "suspicionTime": firestore.SERVER_TIMESTAMP
+                            })
+                        if count == 7:
+                            update_user_field(examId, studentId, {
+                                "cheatDetected": "true",
+                                "detectionTime": firestore.SERVER_TIMESTAMP
+                            })
 
         # ---- Overlay info ----
         cv2.putText(frame, f"Student: {studentId}", (50, 100),
@@ -162,7 +163,4 @@ def run_app():
         print(f"⚠ Không tìm thấy ảnh gốc: {registered_face_path}")
         return
 
-    # Removed proxy start from here
-
-    # chạy vòng giám sát
     monitoring_loop()
