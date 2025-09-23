@@ -1,0 +1,6 @@
+# Danh sách các tên miền được phép truy cập khi hệ thống giám sát đang hoạt động.
+# Mỗi tên miền trên một dòng. Không cần "http://" hoặc "www.".
+# Ví dụ:
+# google.com
+# firebase.com
+# example.edu

@@ -3,16 +3,22 @@ import time
 import threading
 import os
 import subprocess
-import re # Import re module for regex
+import re
 import firebase_admin
-from core.face_auth import verify_face
-from core.yolo_detect import init_yolo, detect_objects
-from core.firebase_utils import update_user_field, get_user_doc
-from core.proxy_server import start_proxy
-from firebase_admin import credentials, firestore
 import tkinter as tk
 from tkinter import messagebox
 import numpy as np
+from firebase_admin import credentials, firestore
+
+from core.face_auth import verify_face
+from core.yolo_detect import init_yolo, detect_objects
+from core.firebase_utils import update_user_field, get_user_doc
+from core.proxy_server import start_proxy, stop_proxy
+from core.network_utils import (
+    set_system_proxy, reset_system_proxy,
+    get_active_network_interfaces, set_system_dns, reset_system_dns,
+    start_dns_server, stop_dns_server
+)
 
 # ================= CONFIG =================
 REGISTERED_FACES_DIR = "data/registered_faces"
@@ -25,83 +31,75 @@ examId = None
 studentId = None
 authenticated = False
 registered_face_path = None
-proxy_started = False
-dns_blocked = False # New flag to track DNS blocking status
-# Store original DNS config for each interface for resetting
-original_dns_config_interfaces = [] 
 
-def run_netsh_command(command_parts):
-    try:
-        result = subprocess.run(command_parts, check=True, capture_output=True, text=True, shell=True)
-        print(f"✓ netsh output: {result.stdout.strip()}")
-        return True
-    except subprocess.CalledProcessError as e:
-        print(f"✗ Lỗi netsh: {e.cmd}")
-        print(f"  Stdout: {e.stdout.strip()}")
-        print(f"  Stderr: {e.stderr.strip()}")
-        return False
-    except FileNotFoundError:
-        print("✗ Lỗi: Lệnh 'netsh' không tìm thấy. Có thể không phải Windows hoặc PATH sai.")
-        return False
+proxy_active = False
+dns_blocked_interfaces = [] # Lưu trữ các interface đã được thay đổi DNS
+dns_server_active = False
 
-def set_system_proxy():
-    print("Đang thiết lập proxy hệ thống...")
-    success = run_netsh_command(["netsh", "winhttp", "set", "proxy", "127.0.0.1:8899"])
-    if success:
-        print("✓ Đã thiết lập proxy hệ thống.")
+def apply_network_restrictions():
+    global proxy_active, dns_blocked_interfaces, dns_server_active
+    print("⚙️ Áp dụng các hạn chế mạng...")
+
+    # 1. Khởi động DNS Server cục bộ
+    if not dns_server_active:
+        start_dns_server()
+        dns_server_active = True
+        print("✓ DNS Server cục bộ đã khởi động.")
+
+    # 2. Đặt DNS hệ thống trỏ về DNS Server cục bộ
+    active_interfaces = get_active_network_interfaces()
+    if active_interfaces:
+        for interface in active_interfaces:
+            if set_system_dns(interface):
+                dns_blocked_interfaces.append(interface)
+        print("✓ DNS hệ thống đã trỏ về DNS Server cục bộ.")
     else:
-        print("✗ Không thể thiết lập proxy hệ thống.")
+        print("⚠ Không tìm thấy card mạng hoạt động để thiết lập DNS.")
 
-def reset_system_proxy():
-    print("Đang đặt lại proxy hệ thống...")
-    success = run_netsh_command(["netsh", "winhttp", "reset", "proxy"])
-    if success:
-        print("✓ Đã đặt lại proxy hệ thống.")
-    else:
-        print("✗ Không thể đặt lại proxy hệ thống.")
+    # 3. Khởi động Proxy Server và thiết lập Proxy hệ thống
+    if not proxy_active:
+        threading.Thread(target=start_proxy, daemon=True).start()
+        proxy_active = True
+        # Chờ một chút để proxy server khởi động
+        time.sleep(1)
+        if set_system_proxy():
+            print("✓ Proxy hệ thống đã thiết lập.")
+        else:
+            print("✗ Không thể thiết lập proxy hệ thống.")
 
-def get_active_network_interfaces():
-    interfaces = []
-    try:
-        result = subprocess.run(["netsh", "interface", "show", "interface"], check=True, capture_output=True, text=True, shell=True)
-        output = result.stdout
-        # Regex to find interface names. 'Enabled' or 'Connected' status
-        # Adapters that start with 'Wi-Fi', 'Ethernet', etc.
-        for line in output.splitlines():
-            if "Connected" in line or "Enabled" in line:
-                match = re.search(r'\s{2,}\w+\s{2,}\w+\s{2,}\w+\s{2,}(.+)$', line) # Matches the Interface Name column
-                if match:
-                    interface_name = match.group(1).strip()
-                    if interface_name and interface_name not in ['Loopback Pseudo-Interface 1']:
-                         interfaces.append(interface_name)
-    except Exception as e:
-        print(f"✗ Lỗi khi lấy danh sách card mạng: {e}")
-    return interfaces
+def remove_network_restrictions():
+    global proxy_active, dns_blocked_interfaces, dns_server_active
+    print("⚙️ Gỡ bỏ các hạn chế mạng...")
 
-def set_system_dns(interface_name, dns_server="127.0.0.1"):
-    print(f"Đang thiết lập DNS cho adapter '{interface_name}' thành {dns_server}...")
-    success = run_netsh_command(["netsh", "interface", "ipv4", "set", "dns", interface_name, "static", dns_server])
-    if success:
-        print(f"✓ Đã thiết lập DNS cho '{interface_name}'.")
-    else:
-        print(f"✗ Không thể thiết lập DNS cho '{interface_name}'.")
+    # 1. Đặt lại Proxy hệ thống
+    if proxy_active:
+        reset_system_proxy()
+        stop_proxy()
+        proxy_active = False
+        print("✓ Proxy hệ thống đã đặt lại.")
 
-def reset_system_dns(interface_name):
-    print(f"Đang đặt lại DNS cho adapter '{interface_name}' về DHCP...")
-    success = run_netsh_command(["netsh", "interface", "ipv4", "set", "dns", interface_name, "dhcp"])
-    if success:
-        print(f"✓ Đã đặt lại DNS cho '{interface_name}'.")
-    else:
-        print(f"✗ Không thể đặt lại DNS cho '{interface_name}'.")
+    # 2. Đặt lại DNS hệ thống
+    if dns_blocked_interfaces:
+        for interface in dns_blocked_interfaces:
+            reset_system_dns(interface)
+        dns_blocked_interfaces = []
+        print("✓ DNS hệ thống đã đặt lại.")
+
+    # 3. Dừng DNS Server cục bộ
+    if dns_server_active:
+        stop_dns_server()
+        dns_server_active = False
+        print("✓ DNS Server cục bộ đã dừng.")
+
 
 def monitoring_loop():
-    global authenticated, registered_face_path, proxy_started, dns_blocked, original_dns_config_interfaces
+    global authenticated, registered_face_path
 
     net, classes, output_layers = init_yolo(YOLO_WEIGHTS, YOLO_CFG, COCO_NAMES)
     cap = cv2.VideoCapture(0)
 
     if not cap.isOpened():
-        print("✗ Không thể mở camera!")
+        print("✗ Không thể mở camera! Đảm bảo không có ứng dụng nào khác đang sử dụng camera.")
         return
 
     count, frame_count = 0, 0
@@ -132,21 +130,7 @@ def monitoring_loop():
                     if not authenticated:
                         print("👤 Khuôn mặt khớp - xác thực hoàn tất!")
                         authenticated = True
-                        # Start proxy and set system proxy
-                        if not proxy_started:
-                            threading.Thread(target=start_proxy, daemon=True).start()
-                            proxy_started = True
-                            set_system_proxy()
-                        
-                        # Set DNS after successful authentication and proxy setup
-                        if not dns_blocked:
-                            original_dns_config_interfaces = get_active_network_interfaces()
-                            if original_dns_config_interfaces:
-                                for interface in original_dns_config_interfaces:
-                                    set_system_dns(interface)
-                                dns_blocked = True
-                            else:
-                                print("⚠ Không tìm thấy card mạng hoạt động để thiết lập DNS.")
+                        apply_network_restrictions() # Áp dụng hạn chế mạng sau xác thực
 
                 elif verified is False:
                     cv2.putText(frame, "Face: NOT VERIFIED", (50, 50),
@@ -203,7 +187,7 @@ def monitoring_loop():
             # ---- Remote stop ----
             if time.time() - last_check_time >= check_interval:
                 doc = get_user_doc(examId, studentId)
-                if doc.exists and doc.to_dict().get("antiCheat", False):
+                if doc.exists and not doc.to_dict().get("antiCheat", True): # Cờ antiCheat false để dừng
                     print("🛑 Tắt giám sát do yêu cầu từ xa.")
                     break
                 last_check_time = time.time()
@@ -214,12 +198,8 @@ def monitoring_loop():
                 print("👋 Người dùng thoát.")
                 break
     finally:
-        # Ensure DNS and proxy are reset even if an error occurs
-        if proxy_started:
-            reset_system_proxy()
-        if dns_blocked and original_dns_config_interfaces:
-            for interface in original_dns_config_interfaces:
-                reset_system_dns(interface)
+        print("Clean up after monitoring loop...")
+        remove_network_restrictions() # Đảm bảo gỡ bỏ hạn chế mạng khi thoát
 
     cap.release()
     cv2.destroyAllWindows()
@@ -228,7 +208,7 @@ def monitoring_loop():
 def run_app():
     global examId, studentId, registered_face_path
 
-    def start_exam():
+    def start_exam_action():
         global examId, studentId, registered_face_path
         examId = entry_exam.get().strip()
         studentId = entry_student.get().strip()
@@ -241,28 +221,33 @@ def run_app():
     root = tk.Tk()
     root.title("Exam Login")
 
-    tk.Label(root, text="Exam ID").pack()
-    entry_exam = tk.Entry(root)
-    entry_exam.pack()
+    tk.Label(root, text="Exam ID").pack(pady=5)
+    entry_exam = tk.Entry(root, width=30)
+    entry_exam.pack(pady=5)
 
-    tk.Label(root, text="Student ID").pack()
-    entry_student = tk.Entry(root)
-    entry_student.pack()
+    tk.Label(root, text="Student ID").pack(pady=5)
+    entry_student = tk.Entry(root, width=30)
+    entry_student.pack(pady=5)
 
-    tk.Button(root, text="Bắt đầu", command=start_exam).pack()
+    tk.Button(root, text="Bắt đầu", command=start_exam_action).pack(pady=10)
 
     root.mainloop()
 
-    if not os.path.exists(registered_face_path):
-        print(f"⚠ Không tìm thấy ảnh gốc: {registered_face_path}")
+    if not examId or not studentId:
+        print("✗ Người dùng đã hủy hoặc không nhập thông tin. Thoát ứng dụng.")
         return
 
+    if not os.path.exists(registered_face_path):
+        print(f"⚠ Không tìm thấy ảnh gốc cho Student ID {studentId} tại: {registered_face_path}")
+        messagebox.showerror("Lỗi", f"Không tìm thấy ảnh gốc cho Student ID {studentId}. Vui lòng đảm bảo ảnh đã được đăng ký.")
+        return
+    
+    # Đảm bảo gỡ bỏ hạn chế mạng nếu có bất kỳ lỗi nào xảy ra trước hoặc sau monitoring_loop
     try:
         monitoring_loop()
     finally:
-        # Ensure DNS and proxy are reset in case monitoring_loop does not complete fully
-        if proxy_started:
-            reset_system_proxy()
-        if dns_blocked and original_dns_config_interfaces:
-            for interface in original_dns_config_interfaces:
-                reset_system_dns(interface)
+        # Đây là khối finally cuối cùng, đảm bảo mọi thứ được reset. 
+        # monitoring_loop() cũng đã có finally riêng, nhưng đây là một lớp bảo vệ bổ sung.
+        if proxy_active or dns_server_active or dns_blocked_interfaces:
+            print("Chạy clean up cuối cùng từ run_app...")
+            remove_network_restrictions()
