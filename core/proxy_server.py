@@ -1,6 +1,6 @@
 from proxy.http.proxy import HttpProxyPlugin
 from proxy.http.parser import HttpParser
-from proxy.main import main as proxy_main # Import the correct main function
+from proxy import main as proxy_main # Import the correct main function
 import sys
 
 with open("config/whitelist.txt") as f:

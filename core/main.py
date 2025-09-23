@@ -49,8 +49,8 @@ def monitoring_loop():
 
         frame_count += 1
 
-        # ---- Face verification mỗi 10 frame ----
-        if registered_face_path and os.path.exists(registered_face_path) and frame_count % 10 == 0:
+        # ---- Face verification (only runs if not yet authenticated) ----
+        if not authenticated and registered_face_path and os.path.exists(registered_face_path) and frame_count % 10 == 0:
             verified = verify_face(frame, registered_face_path)
             if verified is True:
                 cv2.putText(frame, "Face: VERIFIED", (50, 50),
@@ -60,7 +60,7 @@ def monitoring_loop():
                     "lastVerifiedTime": firestore.SERVER_TIMESTAMP
                 })
 
-                if not authenticated:
+                if not authenticated: # This check is redundant but harmless here
                     print("👤 Khuôn mặt khớp - xác thực hoàn tất!")
                     authenticated = True
                     # Start proxy only after successful face authentication
@@ -78,6 +78,13 @@ def monitoring_loop():
             else:
                 cv2.putText(frame, "Face: ERROR", (50, 50),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 100, 255), 2)
+        elif authenticated: # Display verified message if already authenticated
+             cv2.putText(frame, "Face: VERIFIED (Authenticated)", (50, 50),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+        else: # Display no reference if not authenticated and no registered face path
+            cv2.putText(frame, "Face: NO REFERENCE", (50, 50),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (128, 128, 128), 2)
+
 
         # ---- YOLO chỉ chạy khi authenticated ----
         if authenticated and net is not None:
