@@ -149,7 +149,7 @@ def stop_dns_server():
 def run_netsh_command(command_parts):
     try:
         result = subprocess.run(command_parts, check=True, capture_output=True, text=True, shell=True)
-        print(f"✓ netsh output: {command_parts[2]} {command_parts[3]} succeeded") # Rút gọn output
+        print(f"✓ netsh output: '{' '.join(command_parts)}' succeeded") # Sửa đổi dòng này
         return True
     except subprocess.CalledProcessError as e:
         print(f"✗ Lỗi netsh: {e.cmd}")
