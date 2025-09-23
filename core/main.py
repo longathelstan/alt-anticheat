@@ -22,9 +22,10 @@ examId = None
 studentId = None
 authenticated = False
 registered_face_path = None
+proxy_started = False # New flag to track proxy status
 
 def monitoring_loop():
-    global authenticated, registered_face_path
+    global authenticated, registered_face_path, proxy_started
 
     # Load YOLO
     net, classes, output_layers = init_yolo(YOLO_WEIGHTS, YOLO_CFG, COCO_NAMES)
@@ -61,6 +62,10 @@ def monitoring_loop():
                 if not authenticated:
                     print("👤 Khuôn mặt khớp - xác thực hoàn tất!")
                     authenticated = True
+                    # Start proxy only after successful face authentication
+                    if not proxy_started:
+                        threading.Thread(target=start_proxy, daemon=True).start()
+                        proxy_started = True
 
             elif verified is False:
                 cv2.putText(frame, "Face: NOT VERIFIED", (50, 50),
@@ -157,8 +162,7 @@ def run_app():
         print(f"⚠ Không tìm thấy ảnh gốc: {registered_face_path}")
         return
 
-    # chạy proxy song song
-    threading.Thread(target=start_proxy, daemon=True).start()
+    # Removed proxy start from here
 
     # chạy vòng giám sát
     monitoring_loop()
