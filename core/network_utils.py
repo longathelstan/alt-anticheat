@@ -156,7 +156,7 @@ def get_active_network_interfaces():
         current_interface = None
         for line in output.splitlines():
             if "Cấu hình cho giao diện" in line or "Configuration for interface" in line: # Dòng bắt đầu của một interface mới
-                match = re.search(r"Cấu hình cho giao diện "(.+)"", line) or re.search(r"Configuration for interface "(.+)"", line)
+                match = re.search(r'Cấu hình cho giao diện "(.+)"', line) or re.search(r'Configuration for interface "(.+)"', line)
                 if match:
                     current_interface = match.group(1).strip()
                     if current_interface and current_interface not in ['Loopback Pseudo-Interface 1']:
