@@ -12,7 +12,7 @@ WHITELISTED_DOMAINS = []
 def load_dns_whitelist():
     global WHITELISTED_DOMAINS
     try:
-        with open(DNS_WHITELIST_PATH, "r") as f:
+        with open(DNS_WHITELIST_PATH, "r", encoding="utf-8") as f: # Thêm encoding="utf-8"
             WHITELISTED_DOMAINS = [line.strip().lower() for line in f if line.strip() and not line.startswith('#')]
         print(f"✓ Đã tải DNS Whitelist: {WHITELISTED_DOMAINS}")
     except FileNotFoundError:
@@ -32,20 +32,54 @@ dns_server_running = False
 def handle_dns_request(data, addr, sock):
     try:
         request = DNSRecord.parse(data)
-        qname = str(request.q.qname).lower().rstrip('.')
-        
+        qtype = request.q.qtype
+
         response = DNSRecord(request.header)
         response.add_question(request.q)
 
+        # Xử lý riêng cho các yêu cầu tra cứu ngược (PTR records)
+        if qtype == QTYPE.PTR:
+            try:
+                # Chuyển tiếp yêu cầu PTR đến DNS công cộng
+                upstream_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                upstream_sock.settimeout(2)
+                upstream_sock.sendto(data, ("8.8.8.8", 53)) # Google Public DNS
+                upstream_response, _ = upstream_sock.recvfrom(512)
+                sock.sendto(upstream_response, addr)
+            except Exception as e:
+                print(f"✗ Lỗi khi chuyển tiếp PTR request từ {addr}: {e}")
+                # Trả về NXDOMAIN nếu chuyển tiếp thất bại
+                response.header.ra = 1
+                response.header.rcode = QTYPE.NXDOMAIN
+                sock.sendto(response.pack(), addr)
+            finally:
+                if upstream_sock:
+                    upstream_sock.close()
+            return # Kết thúc xử lý yêu cầu PTR
+
+        # Đối với các loại truy vấn khác (chủ yếu là A record), tiếp tục với logic danh sách trắng
+        qname = str(request.q.qname).lower().rstrip('.')
+        
         is_whitelisted = False
-        for domain in WHITELISTED_DOMAINS:
-            if qname == domain or qname.endswith('.' + domain):
+        qname_parts = qname.split('.')
+
+        for allowed_domain in WHITELISTED_DOMAINS:
+            allowed_parts = allowed_domain.split('.')
+            
+            # Kiểm tra nếu qname chính xác là allowed_domain
+            if qname == allowed_domain:
                 is_whitelisted = True
                 break
+            
+            # Kiểm tra nếu qname là một tên miền phụ hợp lệ của allowed_domain
+            # Ví dụ: www.google.com là subdomain của google.com
+            # Kiểm tra xem allowed_domain có phải là hậu tố của qname_parts không
+            if len(qname_parts) > len(allowed_parts):
+                if qname_parts[-len(allowed_parts):] == allowed_parts: # So sánh các phần cuối cùng
+                    is_whitelisted = True
+                    break
 
         if is_whitelisted:
-            # Chuyển tiếp yêu cầu đến một DNS công cộng (ví dụ: Google DNS)
-            # Hoặc, nếu bạn muốn chặn luôn nhưng cho phép một số IP cụ thể (ít dùng cho whitelist DNS)
             try:
                 # Sử dụng DNS của Google để phân giải cho các domain trong whitelist
                 upstream_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -55,7 +89,6 @@ def handle_dns_request(data, addr, sock):
                 sock.sendto(upstream_response, addr)
             except Exception as e:
                 print(f"✗ Lỗi khi chuyển tiếp DNS cho {qname}: {e}")
-                # Trả về NXDOMAIN nếu chuyển tiếp thất bại
                 response.header.ra = 1
                 response.header.rcode = QTYPE.NXDOMAIN
                 sock.sendto(response.pack(), addr)
@@ -63,7 +96,6 @@ def handle_dns_request(data, addr, sock):
                 if upstream_sock:
                     upstream_sock.close()
         else:
-            # Chặn: Trả về NXDOMAIN (tên miền không tồn tại)
             print(f"🚫 Chặn truy vấn DNS cho: {qname} (không có trong whitelist)")
             response.header.ra = 1
             response.header.rcode = QTYPE.NXDOMAIN
@@ -127,6 +159,16 @@ def run_netsh_command(command_parts):
     except FileNotFoundError:
         print("✗ Lỗi: Lệnh 'netsh' không tìm thấy. Có thể không phải Windows hoặc PATH sai.")
         return False
+
+def flush_dns_cache():
+    """Xóa bộ nhớ cache DNS của hệ điều hành."""
+    print("⚙️ Đang xóa bộ nhớ cache DNS...")
+    success = run_netsh_command(["ipconfig", "/flushdns"])
+    if success:
+        print("✓ Đã xóa bộ nhớ cache DNS.")
+    else:
+        print("✗ Không thể xóa bộ nhớ cache DNS.")
+    return success
 
 def set_system_proxy(proxy_address="127.0.0.1:8899"):
     print(f"Đang thiết lập proxy hệ thống thành {proxy_address}...")

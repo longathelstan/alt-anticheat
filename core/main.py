@@ -17,7 +17,7 @@ from core.proxy_server import start_proxy, stop_proxy
 from core.network_utils import (
     set_system_proxy, reset_system_proxy,
     get_active_network_interfaces, set_system_dns, reset_system_dns,
-    start_dns_server, stop_dns_server
+    start_dns_server, stop_dns_server, flush_dns_cache
 )
 
 # ================= CONFIG =================
@@ -37,8 +37,15 @@ dns_blocked_interfaces = [] # Lưu trữ các interface đã được thay đổ
 dns_server_active = False
 
 def apply_network_restrictions():
+    """
+    Áp dụng các hạn chế mạng: khởi động DNS và Proxy server cục bộ,
+    đặt DNS và Proxy của hệ thống trỏ về cục bộ, và xóa cache DNS.
+    """
     global proxy_active, dns_blocked_interfaces, dns_server_active
     print("⚙️ Áp dụng các hạn chế mạng...")
+
+    # 0. Xóa bộ nhớ cache DNS của hệ điều hành
+    flush_dns_cache()
 
     # 1. Khởi động DNS Server cục bộ
     if not dns_server_active:
@@ -68,6 +75,9 @@ def apply_network_restrictions():
             print("✗ Không thể thiết lập proxy hệ thống.")
 
 def remove_network_restrictions():
+    """
+    Gỡ bỏ tất cả các hạn chế mạng đã áp dụng và khôi phục cài đặt gốc.
+    """
     global proxy_active, dns_blocked_interfaces, dns_server_active
     print("⚙️ Gỡ bỏ các hạn chế mạng...")
 
@@ -90,9 +100,16 @@ def remove_network_restrictions():
         stop_dns_server()
         dns_server_active = False
         print("✓ DNS Server cục bộ đã dừng.")
+    
+    # 4. Xóa bộ nhớ cache DNS một lần nữa để đảm bảo sạch sẽ
+    flush_dns_cache()
 
 
 def monitoring_loop():
+    """
+    Vòng lặp chính để giám sát kỳ thi, bao gồm xác thực khuôn mặt, phát hiện đối tượng
+    và kiểm soát mạng.
+    """
     global authenticated, registered_face_path
 
     net, classes, output_layers = init_yolo(YOLO_WEIGHTS, YOLO_CFG, COCO_NAMES)
@@ -102,7 +119,7 @@ def monitoring_loop():
         print("✗ Không thể mở camera! Đảm bảo không có ứng dụng nào khác đang sử dụng camera.")
         return
 
-    count, frame_count = 0, 0
+    phone_detection_count, frame_count = 0, 0
     last_check_time, check_interval = time.time(), 5
 
     print("🔍 Bắt đầu giám sát... (ESC để thoát)")
@@ -164,15 +181,15 @@ def monitoring_loop():
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
 
                         if label == "cell phone":
-                            count += 1
-                            print(f"📱 Phát hiện điện thoại lần {count}")
+                            phone_detection_count += 1
+                            print(f"📱 Phát hiện điện thoại lần {phone_detection_count}")
 
-                            if count == 3:
+                            if phone_detection_count == 3:
                                 update_user_field(examId, studentId, {
                                     "cheatSuspicion": "true",
                                     "suspicionTime": firestore.SERVER_TIMESTAMP
                                 })
-                            if count == 7:
+                            if phone_detection_count == 7:
                                 update_user_field(examId, studentId, {
                                     "cheatDetected": "true",
                                     "detectionTime": firestore.SERVER_TIMESTAMP
@@ -181,13 +198,14 @@ def monitoring_loop():
             # ---- Overlay info ----
             cv2.putText(frame, f"Student: {studentId}", (50, 100),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-            cv2.putText(frame, f"Phone detections: {count}", (50, 130),
+            cv2.putText(frame, f"Phone detections: {phone_detection_count}", (50, 130),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
 
             # ---- Remote stop ----
             if time.time() - last_check_time >= check_interval:
                 doc = get_user_doc(examId, studentId)
-                if doc.exists and not doc.to_dict().get("antiCheat", True): # Cờ antiCheat false để dừng
+                # Giám sát sẽ dừng nếu trường 'monitoringEnabled' trong Firebase được đặt thành False
+                if doc.exists and not doc.to_dict().get("monitoringEnabled", True):
                     print("🛑 Tắt giám sát do yêu cầu từ xa.")
                     break
                 last_check_time = time.time()
@@ -206,10 +224,15 @@ def monitoring_loop():
     print("✓ Hoàn tất giám sát!")
 
 def run_app():
+    """
+    Khởi chạy ứng dụng giám sát kỳ thi, bao gồm giao diện đăng nhập
+    và vòng lặp giám sát chính.
+    """
     global examId, studentId, registered_face_path
 
     def start_exam_action():
-        global examId, studentId, registered_face_path
+        """Xử lý hành động "Bắt đầu" từ giao diện đăng nhập."""
+        nonlocal examId, studentId, registered_face_path
         examId = entry_exam.get().strip()
         studentId = entry_student.get().strip()
         if not examId or not studentId:
@@ -220,6 +243,7 @@ def run_app():
 
     root = tk.Tk()
     root.title("Exam Login")
+    root.geometry("300x200") # Kích thước cửa sổ mặc định
 
     tk.Label(root, text="Exam ID").pack(pady=5)
     entry_exam = tk.Entry(root, width=30)
