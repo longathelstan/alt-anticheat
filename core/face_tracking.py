@@ -24,7 +24,7 @@ class FaceTracker:
                     landmark_drawing_spec=None,
                     connection_drawing_spec=self.mp_drawing_styles
                     .get_default_face_mesh_tesselation_style())
-                self_mp_drawing.draw_landmarks(
+                self.mp_drawing.draw_landmarks(
                     image=frame,
                     landmark_list=face_landmarks,
                     connections=self.mp_face_mesh.FACEMESH_CONTOURS,
