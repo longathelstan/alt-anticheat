@@ -232,7 +232,7 @@ def run_app():
 
     def start_exam_action():
         """Xử lý hành động "Bắt đầu" từ giao diện đăng nhập."""
-        nonlocal examId, studentId, registered_face_path
+        global examId, studentId, registered_face_path
         examId = entry_exam.get().strip()
         studentId = entry_student.get().strip()
         if not examId or not studentId:

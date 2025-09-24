@@ -1,8 +1,0 @@
-# Danh sách các tên miền được phép truy cập qua Proxy HTTP/HTTPS.
-# Mỗi tên miền trên một dòng. Không cần "http://" hoặc "www.".
-# Để cho phép tên miền chính và tất cả các tên miền phụ của nó (ví dụ: google.com sẽ cho phép mail.google.com, docs.google.com):
-#   Chỉ cần thêm tên miền chính.
-# Ví dụ:
-# google.com
-# firebase.com
-# example.edu
