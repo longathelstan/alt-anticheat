@@ -5,11 +5,10 @@ import sys
 import os
 import threading
 
-# ================= CONFIG =================
 WHITELIST_PATH = "config/whitelist.txt"
 WHITELIST = []
 proxy_thread = None
-proxy_running_flag = threading.Event() # Sử dụng Event để báo hiệu trạng thái proxy
+proxy_running_flag = threading.Event()
 
 def load_proxy_whitelist():
     global WHITELIST
@@ -40,27 +39,24 @@ class WhitelistPlugin(HttpProxyPlugin):
         return request
 
 def _run_proxy_main():
-    # Store original argv
     original_argv = sys.argv
     try:
-        # Set sys.argv to simulate command line arguments
         sys.argv = [
-            "proxy_server.py", # First argument is usually the script name
+            "proxy_server.py",
             "--hostname", "127.0.0.1",
             "--port", "8899",
             "--plugins", __name__ + ".WhitelistPlugin"
         ]
-        proxy_running_flag.set() # Báo hiệu proxy đã khởi động
-        proxy_main() # Call the correct main function
+        proxy_running_flag.set()
+        proxy_main()
     except SystemExit as e:
-        # proxy_main() có thể gọi sys.exit(). Bắt nó để không làm dừng ứng dụng chính.
-        if str(e) != "0": # Chỉ in lỗi nếu không phải là thoát thành công
+        if str(e) != "0":
             print(f"✗ Proxy server exited with error: {e}")
     except Exception as e:
         print(f"✗ Lỗi khi chạy proxy server: {e}")
     finally:
         sys.argv = original_argv
-        proxy_running_flag.clear() # Báo hiệu proxy đã dừng
+        proxy_running_flag.clear()
 
 def start_proxy():
     global proxy_thread
@@ -68,19 +64,13 @@ def start_proxy():
         load_proxy_whitelist()
         proxy_thread = threading.Thread(target=_run_proxy_main, daemon=True)
         proxy_thread.start()
-        proxy_running_flag.wait(timeout=5) # Chờ proxy khởi động (tối đa 5 giây)
+        proxy_running_flag.wait(timeout=5)
         if proxy_running_flag.is_set():
             print("✓ Proxy Server cục bộ đã khởi động.")
         else:
             print("✗ Không thể xác nhận Proxy Server đã khởi động.")
 
 def stop_proxy():
-    # Với thư viện proxy này, không có cách trực tiếp để 'dừng' proxy_main()
-    # khi nó đang chạy trong một luồng daemon mà không can thiệp sâu.
-    # Luồng daemon sẽ tự kết thúc khi chương trình chính thoát.
-    # Tuy nhiên, nếu bạn cần một cách để dừng nó trong quá trình runtime,
-    # bạn sẽ cần một cách triển khai proxy server tùy chỉnh hoặc một thư viện khác.
-    # Hiện tại, chúng ta dựa vào daemon=True và việc thoát của luồng chính.
     if proxy_running_flag.is_set():
         print("Đang yêu cầu dừng Proxy Server. (Sẽ tự dừng khi ứng dụng chính thoát)")
         proxy_running_flag.clear()

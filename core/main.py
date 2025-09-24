@@ -20,40 +20,31 @@ from core.network_utils import (
     start_dns_server, stop_dns_server, flush_dns_cache
 )
 
-# ================= CONFIG =================
 REGISTERED_FACES_DIR = "data/registered_faces"
 YOLO_WEIGHTS = "config/yolov7-tiny.weights"
 YOLO_CFG = "config/yolov7-tiny.cfg"
 COCO_NAMES = "config/coco.names"
 
-# ================= GLOBAL VARS =================
 examId = None
 studentId = None
 authenticated = False
 registered_face_path = None
 
 proxy_active = False
-dns_blocked_interfaces = [] # Lưu trữ các interface đã được thay đổi DNS
+dns_blocked_interfaces = []
 dns_server_active = False
 
 def apply_network_restrictions():
-    """
-    Áp dụng các hạn chế mạng: khởi động DNS và Proxy server cục bộ,
-    đặt DNS và Proxy của hệ thống trỏ về cục bộ, và xóa cache DNS.
-    """
     global proxy_active, dns_blocked_interfaces, dns_server_active
     print("⚙️ Áp dụng các hạn chế mạng...")
 
-    # 0. Xóa bộ nhớ cache DNS của hệ điều hành
     flush_dns_cache()
 
-    # 1. Khởi động DNS Server cục bộ
     if not dns_server_active:
         start_dns_server()
         dns_server_active = True
         print("✓ DNS Server cục bộ đã khởi động.")
 
-    # 2. Đặt DNS hệ thống trỏ về DNS Server cục bộ
     active_interfaces = get_active_network_interfaces()
     if active_interfaces:
         for interface in active_interfaces:
@@ -63,11 +54,9 @@ def apply_network_restrictions():
     else:
         print("⚠ Không tìm thấy card mạng hoạt động để thiết lập DNS.")
 
-    # 3. Khởi động Proxy Server và thiết lập Proxy hệ thống
     if not proxy_active:
         threading.Thread(target=start_proxy, daemon=True).start()
         proxy_active = True
-        # Chờ một chút để proxy server khởi động
         time.sleep(1)
         if set_system_proxy():
             print("✓ Proxy hệ thống đã thiết lập.")
@@ -75,41 +64,29 @@ def apply_network_restrictions():
             print("✗ Không thể thiết lập proxy hệ thống.")
 
 def remove_network_restrictions():
-    """
-    Gỡ bỏ tất cả các hạn chế mạng đã áp dụng và khôi phục cài đặt gốc.
-    """
     global proxy_active, dns_blocked_interfaces, dns_server_active
     print("⚙️ Gỡ bỏ các hạn chế mạng...")
 
-    # 1. Đặt lại Proxy hệ thống
     if proxy_active:
         reset_system_proxy()
         stop_proxy()
         proxy_active = False
         print("✓ Proxy hệ thống đã đặt lại.")
 
-    # 2. Đặt lại DNS hệ thống
     if dns_blocked_interfaces:
         for interface in dns_blocked_interfaces:
             reset_system_dns(interface)
         dns_blocked_interfaces = []
         print("✓ DNS hệ thống đã đặt lại.")
 
-    # 3. Dừng DNS Server cục bộ
     if dns_server_active:
         stop_dns_server()
         dns_server_active = False
         print("✓ DNS Server cục bộ đã dừng.")
     
-    # 4. Xóa bộ nhớ cache DNS một lần nữa để đảm bảo sạch sẽ
     flush_dns_cache()
 
-
 def monitoring_loop():
-    """
-    Vòng lặp chính để giám sát kỳ thi, bao gồm xác thực khuôn mặt, phát hiện đối tượng
-    và kiểm soát mạng.
-    """
     global authenticated, registered_face_path
 
     net, classes, output_layers = init_yolo(YOLO_WEIGHTS, YOLO_CFG, COCO_NAMES)
@@ -133,7 +110,6 @@ def monitoring_loop():
 
             frame_count += 1
 
-            # ---- Face verification (only runs if not yet authenticated) ----
             if not authenticated and registered_face_path and os.path.exists(registered_face_path) and frame_count % 10 == 0:
                 verified = verify_face(frame, registered_face_path)
                 if verified is True:
@@ -147,7 +123,7 @@ def monitoring_loop():
                     if not authenticated:
                         print("👤 Khuôn mặt khớp - xác thực hoàn tất!")
                         authenticated = True
-                        apply_network_restrictions() # Áp dụng hạn chế mạng sau xác thực
+                        apply_network_restrictions()
 
                 elif verified is False:
                     cv2.putText(frame, "Face: NOT VERIFIED", (50, 50),
@@ -167,7 +143,6 @@ def monitoring_loop():
                             cv2.FONT_HERSHEY_SIMPLEX, 0.8, (128, 128, 128), 2)
 
 
-            # ---- YOLO chỉ chạy khi authenticated ----
             if authenticated and net is not None:
                 indices, boxes, confidences, class_ids = detect_objects(frame, net, output_layers, classes)
                 if len(indices) > 0:
@@ -195,43 +170,34 @@ def monitoring_loop():
                                     "detectionTime": firestore.SERVER_TIMESTAMP
                                 })
 
-            # ---- Overlay info ----
             cv2.putText(frame, f"Student: {studentId}", (50, 100),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
             cv2.putText(frame, f"Phone detections: {phone_detection_count}", (50, 130),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
 
-            # ---- Remote stop ----
             if time.time() - last_check_time >= check_interval:
                 doc = get_user_doc(examId, studentId)
-                # Giám sát sẽ dừng nếu trường 'monitoringEnabled' trong Firebase được đặt thành False
                 if doc.exists and not doc.to_dict().get("monitoringEnabled", True):
                     print("🛑 Tắt giám sát do yêu cầu từ xa.")
                     break
                 last_check_time = time.time()
 
-            # ---- Show frame ----
             cv2.imshow("Exam Monitoring System", frame)
             if cv2.waitKey(1) == 27:
                 print("👋 Người dùng thoát.")
                 break
     finally:
         print("Clean up after monitoring loop...")
-        remove_network_restrictions() # Đảm bảo gỡ bỏ hạn chế mạng khi thoát
+        remove_network_restrictions()
 
     cap.release()
     cv2.destroyAllWindows()
     print("✓ Hoàn tất giám sát!")
 
 def run_app():
-    """
-    Khởi chạy ứng dụng giám sát kỳ thi, bao gồm giao diện đăng nhập
-    và vòng lặp giám sát chính.
-    """
     global examId, studentId, registered_face_path
 
     def start_exam_action():
-        """Xử lý hành động "Bắt đầu" từ giao diện đăng nhập."""
         global examId, studentId, registered_face_path
         examId = entry_exam.get().strip()
         studentId = entry_student.get().strip()
@@ -243,7 +209,7 @@ def run_app():
 
     root = tk.Tk()
     root.title("Exam Login")
-    root.geometry("300x200") # Kích thước cửa sổ mặc định
+    root.geometry("300x200")
 
     tk.Label(root, text="Exam ID").pack(pady=5)
     entry_exam = tk.Entry(root, width=30)
@@ -266,12 +232,9 @@ def run_app():
         messagebox.showerror("Lỗi", f"Không tìm thấy ảnh gốc cho Student ID {studentId}. Vui lòng đảm bảo ảnh đã được đăng ký.")
         return
     
-    # Đảm bảo gỡ bỏ hạn chế mạng nếu có bất kỳ lỗi nào xảy ra trước hoặc sau monitoring_loop
     try:
         monitoring_loop()
     finally:
-        # Đây là khối finally cuối cùng, đảm bảo mọi thứ được reset. 
-        # monitoring_loop() cũng đã có finally riêng, nhưng đây là một lớp bảo vệ bổ sung.
         if proxy_active or dns_server_active or dns_blocked_interfaces:
             print("Chạy clean up cuối cùng từ run_app...")
             remove_network_restrictions()

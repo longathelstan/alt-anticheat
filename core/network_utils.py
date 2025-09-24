@@ -2,27 +2,24 @@ import subprocess
 import re
 import socket
 import threading
-from dnslib import DNSRecord, RR, A, QTYPE # Cần cài đặt dnslib: pip install dnslib
+from dnslib import DNSRecord, RR, A, QTYPE
 
-# ================= CONFIG =================
-# Đường dẫn tới whitelist cho DNS (ví dụ: các domain được phép truy cập)
 DNS_WHITELIST_PATH = "config/dns_whitelist.txt"
 WHITELISTED_DOMAINS = []
 
 def load_dns_whitelist():
     global WHITELISTED_DOMAINS
     try:
-        with open(DNS_WHITELIST_PATH, "r", encoding="utf-8") as f: # Thêm encoding="utf-8"
+        with open(DNS_WHITELIST_PATH, "r", encoding="utf-8") as f:
             WHITELISTED_DOMAINS = [line.strip().lower() for line in f if line.strip() and not line.startswith('#')]
         print(f"✓ Đã tải DNS Whitelist: {WHITELISTED_DOMAINS}")
     except FileNotFoundError:
         print(f"✗ Không tìm thấy tệp DNS Whitelist: {DNS_WHITELIST_PATH}. Tất cả DNS sẽ bị chặn.")
-        WHITELISTED_DOMAINS = [] # Nếu không tìm thấy whitelist, chặn tất cả
+        WHITELISTED_DOMAINS = []
     except Exception as e:
         print(f"✗ Lỗi khi tải DNS Whitelist: {e}. Tất cả DNS sẽ bị chặn.")
         WHITELISTED_DOMAINS = []
 
-# ================= DNS SERVER =================
 DNS_SERVER_IP = "127.0.0.1"
 DNS_SERVER_PORT = 53
 dns_server_socket = None
@@ -37,27 +34,23 @@ def handle_dns_request(data, addr, sock):
         response = DNSRecord(request.header)
         response.add_question(request.q)
 
-        # Xử lý riêng cho các yêu cầu tra cứu ngược (PTR records)
         if qtype == QTYPE.PTR:
             try:
-                # Chuyển tiếp yêu cầu PTR đến DNS công cộng
                 upstream_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                 upstream_sock.settimeout(2)
-                upstream_sock.sendto(data, ("8.8.8.8", 53)) # Google Public DNS
+                upstream_sock.sendto(data, ("8.8.8.8", 53))
                 upstream_response, _ = upstream_sock.recvfrom(512)
                 sock.sendto(upstream_response, addr)
             except Exception as e:
                 print(f"✗ Lỗi khi chuyển tiếp PTR request từ {addr}: {e}")
-                # Trả về NXDOMAIN nếu chuyển tiếp thất bại
                 response.header.ra = 1
                 response.header.rcode = QTYPE.NXDOMAIN
                 sock.sendto(response.pack(), addr)
             finally:
                 if upstream_sock:
                     upstream_sock.close()
-            return # Kết thúc xử lý yêu cầu PTR
+            return
 
-        # Đối với các loại truy vấn khác (chủ yếu là A record), tiếp tục với logic danh sách trắng
         qname = str(request.q.qname).lower().rstrip('.')
         
         is_whitelisted = False
@@ -66,25 +59,20 @@ def handle_dns_request(data, addr, sock):
         for allowed_domain in WHITELISTED_DOMAINS:
             allowed_parts = allowed_domain.split('.')
             
-            # Kiểm tra nếu qname chính xác là allowed_domain
             if qname == allowed_domain:
                 is_whitelisted = True
                 break
             
-            # Kiểm tra nếu qname là một tên miền phụ hợp lệ của allowed_domain
-            # Ví dụ: www.google.com là subdomain của google.com
-            # Kiểm tra xem allowed_domain có phải là hậu tố của qname_parts không
             if len(qname_parts) > len(allowed_parts):
-                if qname_parts[-len(allowed_parts):] == allowed_parts: # So sánh các phần cuối cùng
+                if qname_parts[-len(allowed_parts):] == allowed_parts:
                     is_whitelisted = True
                     break
 
         if is_whitelisted:
             try:
-                # Sử dụng DNS của Google để phân giải cho các domain trong whitelist
                 upstream_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                 upstream_sock.settimeout(2)
-                upstream_sock.sendto(data, ("8.8.8.8", 53)) # Google Public DNS
+                upstream_sock.sendto(data, ("8.8.8.8", 53))
                 upstream_response, _ = upstream_sock.recvfrom(512)
                 sock.sendto(upstream_response, addr)
             except Exception as e:
@@ -110,7 +98,7 @@ def dns_server_loop():
     try:
         dns_server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         dns_server_socket.bind((DNS_SERVER_IP, DNS_SERVER_PORT))
-        dns_server_socket.settimeout(1) # Timeout để có thể kiểm tra dns_server_running
+        dns_server_socket.settimeout(1)
         print(f"✓ DNS Server đang chạy trên {DNS_SERVER_IP}:{DNS_SERVER_PORT}")
         dns_server_running = True
         while dns_server_running:
@@ -118,7 +106,7 @@ def dns_server_loop():
                 data, addr = dns_server_socket.recvfrom(512)
                 threading.Thread(target=handle_dns_request, args=(data, addr, dns_server_socket)).start()
             except socket.timeout:
-                pass # Tiếp tục vòng lặp nếu timeout
+                pass
             except Exception as e:
                 print(f"✗ Lỗi trong vòng lặp DNS server: {e}")
     except Exception as e:
@@ -134,7 +122,6 @@ def start_dns_server():
     if not dns_server_running:
         dns_server_thread = threading.Thread(target=dns_server_loop, daemon=True)
         dns_server_thread.start()
-        # Chờ một chút để server có thể khởi động
         import time
         time.sleep(0.5)
 
@@ -142,14 +129,12 @@ def stop_dns_server():
     global dns_server_running
     if dns_server_running:
         dns_server_running = False
-        # thread sẽ tự đóng socket khi vòng lặp kết thúc
         print("Đang yêu cầu dừng DNS Server...")
 
-# ================= NETSH COMMANDS =================
 def run_netsh_command(command_parts):
     try:
         result = subprocess.run(command_parts, check=True, capture_output=True, text=True, shell=True)
-        print(f"✓ netsh output: '{' '.join(command_parts)}' succeeded") # Sửa đổi dòng này
+        print(f"✓ netsh output: '{' '.join(command_parts)}' succeeded")
         return True
     except subprocess.CalledProcessError as e:
         print(f"✗ Lỗi netsh: {e.cmd}")
@@ -161,7 +146,6 @@ def run_netsh_command(command_parts):
         return False
 
 def flush_dns_cache():
-    """Xóa bộ nhớ cache DNS của hệ điều hành."""
     print("⚙️ Đang xóa bộ nhớ cache DNS...")
     success = run_netsh_command(["ipconfig", "/flushdns"])
     if success:
@@ -191,23 +175,19 @@ def reset_system_proxy():
 def get_active_network_interfaces():
     interfaces = []
     try:
-        # Lệnh để lấy thông tin interface chi tiết hơn
         result = subprocess.run(["netsh", "interface", "ipv4", "show", "config"], check=True, capture_output=True, text=True, shell=True)
         output = result.stdout
         
         current_interface = None
         for line in output.splitlines():
-            if "Cấu hình cho giao diện" in line or "Configuration for interface" in line: # Dòng bắt đầu của một interface mới
+            if "Cấu hình cho giao diện" in line or "Configuration for interface" in line:
                 match = re.search(r'Cấu hình cho giao diện "(.+)"', line) or re.search(r'Configuration for interface "(.+)"', line)
                 if match:
                     current_interface = match.group(1).strip()
                     if current_interface and current_interface not in ['Loopback Pseudo-Interface 1']:
                         interfaces.append(current_interface)
-            # Có thể thêm logic để kiểm tra trạng thái "Connected" hoặc "Enabled" nếu cần
-            # Tuy nhiên, "show config" thường chỉ hiển thị các interface đang cấu hình IP
     except Exception as e:
         print(f"✗ Lỗi khi lấy danh sách card mạng: {e}")
-    # Đôi khi netsh interface show interface cung cấp thông tin "Connected" rõ ràng hơn
     try:
         result = subprocess.run(["netsh", "interface", "show", "interface"], check=True, capture_output=True, text=True, shell=True)
         output = result.stdout
@@ -221,7 +201,7 @@ def get_active_network_interfaces():
     except Exception as e:
         print(f"✗ Lỗi khi lấy danh sách card mạng từ 'show interface': {e}")
 
-    return list(set(interfaces)) # Đảm bảo không có trùng lặp
+    return list(set(interfaces))
 
 
 def set_system_dns(interface_name, dns_server="127.0.0.1"):

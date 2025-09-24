@@ -1,7 +1,6 @@
 from deepface import DeepFace
 import cv2
 
-# Camera
 cap = cv2.VideoCapture(0)
 
 print("⚡ Đang load database ảnh trong folder images/...")
@@ -12,13 +11,11 @@ while True:
         break
 
     try:
-        # So sánh khuôn mặt hiện tại với database trong "images"
         result = DeepFace.find(frame, db_path="images", enforce_detection=False)
 
         if len(result) > 0:
-            # Lấy ảnh match tốt nhất
             best_match = result[0].iloc[0]["identity"]
-            name = best_match.split("\\")[-1].split(".")[0]  # tên file ảnh
+            name = best_match.split("\\")[-1].split(".")[0]
             cv2.putText(frame, f"Phát hiện: {name}",
                         (50, 50), cv2.FONT_HERSHEY_SIMPLEX,
                         1, (0, 255, 0), 2)
