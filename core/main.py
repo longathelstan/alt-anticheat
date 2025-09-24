@@ -19,6 +19,8 @@ from core.network_utils import (
     get_active_network_interfaces, set_system_dns, reset_system_dns,
     start_dns_server, stop_dns_server, flush_dns_cache
 )
+from core.face_tracking import FaceTracker
+from core.audio_monitoring import AudioMonitor
 
 REGISTERED_FACES_DIR = "data/registered_faces"
 YOLO_WEIGHTS = "config/yolov7-tiny.weights"
@@ -87,9 +89,11 @@ def remove_network_restrictions():
     flush_dns_cache()
 
 def monitoring_loop():
-    global authenticated, registered_face_path
+    global examId, studentId, authenticated, registered_face_path
 
     net, classes, output_layers = init_yolo(YOLO_WEIGHTS, YOLO_CFG, COCO_NAMES)
+    face_tracker = FaceTracker()
+    audio_monitor = AudioMonitor()
     cap = cv2.VideoCapture(0)
 
     if not cap.isOpened():
@@ -98,6 +102,23 @@ def monitoring_loop():
 
     phone_detection_count, frame_count = 0, 0
     last_check_time, check_interval = time.time(), 5
+
+    def handle_speech_detected(text):
+        print(f"Callback: Speech detected: {text}")
+        update_user_field(examId, studentId, {
+            "speechDetected": True,
+            "lastSpeechTime": firestore.SERVER_TIMESTAMP,
+            "lastSpeechText": text
+        })
+
+    def handle_keyword_detected(keyword, text):
+        print(f"Callback: Forbidden keyword detected: {keyword} in {text}")
+        update_user_field(examId, studentId, {
+            "forbiddenKeywordDetected": True,
+            "lastKeywordTime": firestore.SERVER_TIMESTAMP,
+            "lastKeyword": keyword,
+            "fullSpeechWithKeyword": text
+        })
 
     print("🔍 Bắt đầu giám sát... (ESC để thoát)")
 
@@ -109,6 +130,8 @@ def monitoring_loop():
                 break
 
             frame_count += 1
+
+            frame, gaze_direction, head_pose = face_tracker.process_frame(frame)
 
             if not authenticated and registered_face_path and os.path.exists(registered_face_path) and frame_count % 10 == 0:
                 verified = verify_face(frame, registered_face_path)
@@ -124,6 +147,10 @@ def monitoring_loop():
                         print("👤 Khuôn mặt khớp - xác thực hoàn tất!")
                         authenticated = True
                         apply_network_restrictions()
+                        audio_monitor.start_monitoring(
+                            speech_callback=handle_speech_detected,
+                            keyword_callback=handle_keyword_detected
+                        )
 
                 elif verified is False:
                     cv2.putText(frame, "Face: NOT VERIFIED", (50, 50),
@@ -141,7 +168,6 @@ def monitoring_loop():
             else:
                 cv2.putText(frame, "Face: NO REFERENCE", (50, 50),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.8, (128, 128, 128), 2)
-
 
             if authenticated and net is not None:
                 indices, boxes, confidences, class_ids = detect_objects(frame, net, output_layers, classes)
@@ -174,6 +200,10 @@ def monitoring_loop():
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
             cv2.putText(frame, f"Phone detections: {phone_detection_count}", (50, 130),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+            cv2.putText(frame, f"Gaze: {gaze_direction}", (50, 160),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+            cv2.putText(frame, f"Head Pose: {head_pose}", (50, 190),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
 
             if time.time() - last_check_time >= check_interval:
                 doc = get_user_doc(examId, studentId)
@@ -189,6 +219,8 @@ def monitoring_loop():
     finally:
         print("Clean up after monitoring loop...")
         remove_network_restrictions()
+        if audio_monitor.running:
+            audio_monitor.stop_monitoring()
 
     cap.release()
     cv2.destroyAllWindows()

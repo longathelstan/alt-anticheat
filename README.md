@@ -35,7 +35,7 @@ Hệ thống này được thiết kế để hỗ trợ giám sát các kỳ th
 
 1.  **Cài đặt các thư viện Python**:
     ```bash
-    pip install opencv-python deepface dnslib requests firebase-admin dnspython
+    pip install opencv-python deepface dnslib requests firebase-admin dnspython mediapipe pyaudio SpeechRecognition
     ```
 2.  **Cấu hình Firebase**:
     *   Tải xuống tệp `key.json` từ Firebase Project Settings -> Service accounts và đặt nó vào thư mục `config/`.
