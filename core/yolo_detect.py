@@ -37,3 +37,4 @@ def detect_objects(frame, net, output_layers, classes):
 
     indices = cv2.dnn.NMSBoxes(boxes, confidences, CONF_THRESHOLD, NMS_THRESHOLD)
     return indices, boxes, confidences, class_ids
+

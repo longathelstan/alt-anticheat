@@ -1,0 +1,19 @@
+# Core libraries
+opencv-python
+deepface
+firebase-admin
+
+# Final compatible versions for Python 3.12+ environments
+mediapipe==0.10.13
+tensorflow==2.16.1
+tf-keras
+
+# Network utilities
+dnslib
+requests
+dnspython
+proxy.py
+
+# Audio processing
+PyAudio
+SpeechRecognition

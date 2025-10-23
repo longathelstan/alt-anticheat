@@ -2,16 +2,13 @@ import cv2
 import time
 import threading
 import os
-import subprocess
-import re
 import firebase_admin
 import tkinter as tk
 from tkinter import messagebox
-import numpy as np
 from firebase_admin import credentials, firestore
 
 from core.face_auth import verify_face
-from core.yolo_detect import init_yolo, detect_objects
+from core.object_detection import ObjectDetector  # UPDATED: Import ObjectDetector instead of YOLO
 from core.firebase_utils import update_user_field, get_user_doc
 from core.proxy_server import start_proxy, stop_proxy
 from core.network_utils import (
@@ -23,9 +20,7 @@ from core.face_tracking import FaceTracker
 from core.audio_monitoring import AudioMonitor
 
 REGISTERED_FACES_DIR = "data/registered_faces"
-YOLO_WEIGHTS = "config/yolov7-tiny.weights"
-YOLO_CFG = "config/yolov7-tiny.cfg"
-COCO_NAMES = "config/coco.names"
+# REMOVED: YOLO constants are no longer needed
 
 examId = None
 studentId = None
@@ -91,7 +86,8 @@ def remove_network_restrictions():
 def monitoring_loop():
     global examId, studentId, authenticated, registered_face_path
 
-    net, classes, output_layers = init_yolo(YOLO_WEIGHTS, YOLO_CFG, COCO_NAMES)
+    # UPDATED: Initialize MediaPipe ObjectDetector
+    object_detector = ObjectDetector()
     face_tracker = FaceTracker()
     audio_monitor = AudioMonitor()
     cap = cv2.VideoCapture(0)
@@ -133,6 +129,7 @@ def monitoring_loop():
 
             frame, gaze_direction, head_pose = face_tracker.process_frame(frame)
 
+            # Face authentication logic (remains the same)
             if not authenticated and registered_face_path and os.path.exists(registered_face_path) and frame_count % 10 == 0:
                 verified = verify_face(frame, registered_face_path)
                 if verified is True:
@@ -169,32 +166,39 @@ def monitoring_loop():
                 cv2.putText(frame, "Face: NO REFERENCE", (50, 50),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.8, (128, 128, 128), 2)
 
-            if authenticated and net is not None:
-                indices, boxes, confidences, class_ids = detect_objects(frame, net, output_layers, classes)
-                if len(indices) > 0:
-                    for i in indices.flatten():
-                        x, y, w, h = boxes[i]
-                        label, conf = classes[class_ids[i]], confidences[i]
+            # --- UPDATED: Object Detection Block ---
+            if authenticated and object_detector.detector:
+                detections = object_detector.detect(frame)
+                
+                for detection in detections:
+                    label = detection['label']
+                    score = detection['score']
+                    x, y, w, h = detection['bbox']
 
-                        color = (0, 0, 255) if label == "cell phone" else (128, 0, 128)
-                        cv2.rectangle(frame, (x, y), (x + w, y + h), color, 2)
-                        cv2.putText(frame, f"{label} {conf:.2f}", (x, y - 10),
-                                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+                    # MediaPipe might detect 'mobile phone' instead of 'cell phone'
+                    # so we check if 'phone' is in the label.
+                    is_phone = 'phone' in label.lower()
 
-                        if label == "cell phone":
-                            phone_detection_count += 1
-                            print(f"📱 Phát hiện điện thoại lần {phone_detection_count}")
+                    color = (0, 0, 255) if is_phone else (128, 0, 128)
+                    cv2.rectangle(frame, (x, y), (x + w, y + h), color, 2)
+                    cv2.putText(frame, f"{label} {score:.2f}", (x, y - 10),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
 
-                            if phone_detection_count == 3:
-                                update_user_field(examId, studentId, {
-                                    "cheatSuspicion": "true",
-                                    "suspicionTime": firestore.SERVER_TIMESTAMP
-                                })
-                            if phone_detection_count == 7:
-                                update_user_field(examId, studentId, {
-                                    "cheatDetected": "true",
-                                    "detectionTime": firestore.SERVER_TIMESTAMP
-                                })
+                    if is_phone:
+                        phone_detection_count += 1
+                        print(f"📱 Phát hiện điện thoại lần {phone_detection_count}")
+
+                        if phone_detection_count == 3:
+                            update_user_field(examId, studentId, {
+                                "cheatSuspicion": "true",
+                                "suspicionTime": firestore.SERVER_TIMESTAMP
+                            })
+                        if phone_detection_count == 7:
+                            update_user_field(examId, studentId, {
+                                "cheatDetected": "true",
+                                "detectionTime": firestore.SERVER_TIMESTAMP
+                            })
+            # --- END OF UPDATED BLOCK ---
 
             cv2.putText(frame, f"Student: {studentId}", (50, 100),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)

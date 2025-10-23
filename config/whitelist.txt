@@ -1,0 +1,2 @@
+alt-class-tp.vercel.app
+alt-class-sp.vercel.app
